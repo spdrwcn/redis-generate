@@ -2,10 +2,11 @@ use rand::Rng;
 use serde_json::json;
 use std::time::Instant;
 use clap::{App, Arg};
+use rayon::prelude::*;
 
 fn get_matches() -> clap::ArgMatches<'static> {
     let matches = App::new("redis-generate")
-        .version("1.0.0")
+        .version("1.1.0")
         .author("h13317136163@163.com")
         .about("redis数据生成工具")
         .arg(
@@ -42,10 +43,10 @@ fn generate_random_mac() -> String {
     )
 }
 
-fn generate_key_value_pairs<'a>(num_pairs: usize) -> impl Iterator<Item = (String, String)> + 'a {
-    (1..=num_pairs).map(move |i| {
+fn generate_key_value_pairs<'a>(num_pairs: usize) -> impl ParallelIterator<Item = (String, String)> + 'a {
+    (1..=num_pairs).into_par_iter().map(move |_i| {
         (
-            format!("key{}", i),
+            ulid::Ulid::new().to_string(),
             json!({
                 "wired_mac": generate_random_mac(),
                 "wireless_mac": generate_random_mac(),
@@ -62,9 +63,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let number = matches.value_of("num").unwrap().parse::<usize>()?;
     let client = redis::Client::open(ip_address)?;
     let mut con = client.get_connection()?;
-    
+    let key_value_pairs: Vec<_> = generate_key_value_pairs(number).collect();
+
     let mut pipe = redis::pipe();
-    for (key, value) in generate_key_value_pairs(number) {
+    for (key, value) in key_value_pairs {
         pipe.set(key, value);
     }
     pipe.query(&mut con)?;
