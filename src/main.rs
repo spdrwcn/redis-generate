@@ -1,34 +1,34 @@
 use rand::Rng;
 use serde_json::json;
 use std::time::Instant;
-use clap::{App, Arg};
+use clap::Parser;
+use regex::Regex;
 use rayon::prelude::*;
 
-fn get_matches() -> clap::ArgMatches<'static> {
-    let matches = App::new("redis-generate")
-        .version("1.1.0")
-        .author("h13317136163@163.com")
-        .about("redis数据生成工具")
-        .arg(
-            Arg::with_name("ip")
-                .short("i")
-                .long("ip")
-                .value_name("IP_ADDRESS")
-                .help("Redis数据库地址")
-                .default_value("redis://127.0.0.1:6379/0"),
-        )
-        .arg(
-            Arg::with_name("num")
-                .short("n")
-                .long("num")
-                .value_name("number of pairs")
-                .help("生成数量")
-                .default_value("10000"),
-        )
-        .get_matches();
-    matches
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long, default_value_t = String::from("redis://127.0.0.1:6379/0"), value_parser = redis_ip_address_parser)]
+    ip_address: String,
+    #[arg(short, long, default_value_t = 100, value_parser = parse_positive_int)]
+    num: usize,
 }
 
+fn redis_ip_address_parser(s: &str) -> Result<String, String> {
+    let ip_pattern = Regex::new(r"^redis://((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?):([1-9]\d{0,4}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])/([0-9]|1[0-5])$").unwrap();
+
+    if !ip_pattern.is_match(s) {
+        return Err("错误: 请输入正确的Redis地址格式, 例如 'redis://127.0.0.1:6379/0'".to_string());
+    }
+    Ok(s.to_string()) 
+}
+
+fn parse_positive_int(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err("必须是正整数".to_string()),
+    }
+}
 
 fn generate_random_mac() -> String {
     let mut rng = rand::thread_rng();
@@ -43,8 +43,8 @@ fn generate_random_mac() -> String {
     )
 }
 
-fn generate_key_value_pairs<'a>(num_pairs: usize) -> impl ParallelIterator<Item = (String, String)> + 'a {
-    (1..=num_pairs).into_par_iter().map(move |_i| {
+fn generate_key_value_pairs<'a>(num: usize) -> impl ParallelIterator<Item = (String, String)> + 'a {
+    (1..=num).into_par_iter().map(move |_i| {
         (
             ulid::Ulid::new().to_string(),
             json!({
@@ -58,12 +58,11 @@ fn generate_key_value_pairs<'a>(num_pairs: usize) -> impl ParallelIterator<Item 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
-    let matches = get_matches();
-    let ip_address = matches.value_of("ip").unwrap();
-    let number = matches.value_of("num").unwrap().parse::<usize>()?;
-    let client = redis::Client::open(ip_address)?;
+    let cli = Cli::parse();
+
+    let client = redis::Client::open(cli.ip_address)?;
     let mut con = client.get_connection()?;
-    let key_value_pairs: Vec<_> = generate_key_value_pairs(number).collect();
+    let key_value_pairs: Vec<_> = generate_key_value_pairs(cli.num).collect();
 
     let mut pipe = redis::pipe();
     for (key, value) in key_value_pairs {
